@@ -149,11 +149,14 @@ if __name__ == "__main__":
     #
     fly_mat[fly_mat > 0] = 1
     fly_mat[fly_mat != 1] = 0
+    fly_mat[np.identity(fly_mat.shape[0], dtype=bool)] = 0.
     fly_graph = fly_mat
     # print(graph.shape, np.sum(graph))
 
     rand_graph = nx.fast_gnp_random_graph(fly_graph.shape[0], np.sum(fly_graph) / (fly_graph.shape[0] ** 2))
     rand_graph = nx.to_numpy_array(rand_graph)
+
+    rand_graph[np.identity(rand_graph.shape[0], dtype=bool)] = 0.
 
     print(f"Fly graph {np.sum(fly_graph)} edges, rand graph {np.sum(rand_graph)} edges")
 
