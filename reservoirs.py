@@ -29,15 +29,22 @@ class Reservoir:
                  sparsity = None,
                  pca_reduce = False,
                  prediction_model = MLPRegressor,
-                 prediction_model_kwargs = {"verbose":True, "hidden_layer_sizes":(20,)}):
+                 prediction_model_kwargs = {"verbose":True, "hidden_layer_sizes":(20,)},
+                 input_mask = None,
+                 output_mask = None):
 
         self.adjacency = graph
         self.prediction_model = prediction_model(**prediction_model_kwargs)
         # Wu should be initialised when .fit is called
         self.Wx = self.create_weights(spectral_radius=spectral_radius,
                                       sparsity=sparsity)
+
+        self.input_mask = np.ones(self.adjacency.shape[0]) if input_mask is None else input_mask
+        self.output_mask = np.ones(self.adjacency.shape[0]) if output_mask is None else output_mask
+
         self.Wu = None
         self.pca_reduce = pca_reduce
+        self.pos = None
 
         if self.pca_reduce:
             self.pca = PCA(n_components=10)
@@ -66,18 +73,19 @@ class Reservoir:
         node_colours = node_colours if node_colours is not None else np.ones(G.order())
 
         print(f"Calculating positions for {G}")
-        pos = nx.nx_pydot.graphviz_layout(G, prog = "sfdp")
+        if self.pos is None:
+            self.pos = nx.nx_pydot.graphviz_layout(G, prog = "sfdp")
 
         fig, ax = plt.subplots(figsize=(9,9))
-        nx.draw_networkx_nodes(G, pos = pos,
+        nx.draw_networkx_nodes(G, pos = self.pos,
                                node_size=100*node_colours,
                                node_color=node_colours)
         if weights is not None:
             weights = np.array([G[u][v]['weight'] for u, v in G.edges()])
             print(f"Drawing edges")
-            nx.draw_networkx_edges(G, pos = pos, width=weights, alpha = np.abs(weights), ax = ax)
+            nx.draw_networkx_edges(G, pos = self.pos, width=weights, alpha = np.abs(weights), ax = ax)
         else:
-            nx.draw_networkx_edges(G, pos = pos, alpha=0.1, width = 0.1, ax = ax)
+            nx.draw_networkx_edges(G, pos = self.pos, alpha=0.1, width = 0.1, ax = ax)
 
         plt.savefig(f"{name}.png", dpi=600)
         # plt.show()
@@ -111,7 +119,7 @@ class Reservoir:
 
 
     # Alex's function for a simple reservoir operation - please sense check!
-    def forward(self, input, remove_node_idxs=[]):
+    def forward(self, input):
         # Input should be shape |V| x n_steps
         n_steps = input.shape[1]
         x_size = self.Wx.shape[0] # Network size
@@ -122,24 +130,14 @@ class Reservoir:
         x = np.zeros((x_size, 1))
         states = []
         for step in range(n_steps):
-            # print(input.shape, u_size, self.Wu.shape)
             step_data = input[:, step].reshape((u_size, 1))
-
-            # print(self.Wu.shape)
-            # print(step_data)
-            # print(np.vstack((1, step_data)))
-
             u = np.dot(self.Wu, step_data)
-            # u = np.dot(self.Wu, np.vstack((1, step_data)))
-            u[remove_node_idxs] = 0.
-
+            # if input_mask is not None:
+            u[self.input_mask] = 0.
             x = np.tanh(u + np.dot((self.Wx+np.identity(x_size)), x))
-            states += [x.flatten()]
+            # if output_mask is not None:
+            states += [x.flatten()[self.output_mask]]
 
-            # if step == 0:
-            #     x_state = (x)
-            # else:
-            #     x_state = np.hstack((x_state, x))
         return states
 
 
@@ -223,8 +221,8 @@ if __name__ == "__main__":
     print(fly_res.prediction_model.feature_importances_)
     print(rand_res.prediction_model.feature_importances_)
 
-    fly_res.vis_graph(weights=None, name="fly", node_colours=fly_res.prediction_model.feature_importances_)
-    rand_res.vis_graph(weights=None, name="random", node_colours=rand_res.prediction_model.feature_importances_)
+    # fly_res.vis_graph(weights=None, name="fly", node_colours=fly_res.prediction_model.feature_importances_)
+    # rand_res.vis_graph(weights=None, name="random", node_colours=rand_res.prediction_model.feature_importances_)
 
     fly_prediction, fly_states = fly_res.predict(amplitudes_test)
     rand_prediction, rand_states = rand_res.predict(amplitudes_test)
