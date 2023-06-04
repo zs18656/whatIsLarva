@@ -39,8 +39,8 @@ class Reservoir:
         self.Wx = self.create_weights(spectral_radius=spectral_radius,
                                       sparsity=sparsity)
 
-        self.input_mask = np.ones(self.adjacency.shape[0]) if input_mask is None else input_mask
-        self.output_mask = np.ones(self.adjacency.shape[0]) if output_mask is None else output_mask
+        self.input_mask = np.ones(self.adjacency.shape[0], dtype=bool) if input_mask is None else input_mask
+        self.output_mask = np.ones(self.adjacency.shape[0], dtype=bool) if output_mask is None else output_mask
 
         self.Wu = None
         self.pca_reduce = pca_reduce
@@ -78,8 +78,9 @@ class Reservoir:
 
         fig, ax = plt.subplots(figsize=(9,9))
         nx.draw_networkx_nodes(G, pos = self.pos,
-                               node_size=100*node_colours,
-                               node_color=node_colours)
+                               node_size = 8*np.abs(node_colours),
+                               node_color=node_colours,
+                               cmap = "tab10")
         if weights is not None:
             weights = np.array([G[u][v]['weight'] for u, v in G.edges()])
             print(f"Drawing edges")
@@ -119,7 +120,7 @@ class Reservoir:
 
 
     # Alex's function for a simple reservoir operation - please sense check!
-    def forward(self, input):
+    def forward(self, input, all_states = False):
         # Input should be shape |V| x n_steps
         n_steps = input.shape[1]
         x_size = self.Wx.shape[0] # Network size
@@ -133,12 +134,86 @@ class Reservoir:
             step_data = input[:, step].reshape((u_size, 1))
             u = np.dot(self.Wu, step_data)
             # if input_mask is not None:
-            u[self.input_mask] = 0.
+            u[~self.input_mask] = 0.
             x = np.tanh(u + np.dot((self.Wx+np.identity(x_size)), x))
             # if output_mask is not None:
-            states += [x.flatten()[self.output_mask]]
+            if not all_states:
+                states += [x.flatten()[self.output_mask]]
+            else:
+                states += [x.flatten()]
 
         return states
+
+
+class Optimiser:
+    def __init__(self, res):
+        self.res = res
+        pass
+
+    def optimise_inputs(self, series_train, targets_train,
+                 series_test, targets_test,
+                 iterations = 10):
+
+        dimensions = self.res.adjacency.shape[0]
+
+        best_mse = 1e3
+        best_input = None
+        pbar = tqdm(range(iterations), leave = False)
+        for i in pbar:
+            input_mask  = np.zeros(dimensions, dtype = bool)
+
+            input_mask[np.random.randint(low = 0, high = dimensions, size=100)] = True
+
+            self.res.input_mask = input_mask
+            self.res.fit(series_train, targets_train)
+
+            mse = np.sum((self.res.predict(series_test)[0] - targets_test) ** 2)
+            pbar.set_description(f"MSE: {mse}, best {best_mse}")
+
+            if mse < best_mse:
+                best_input = input_mask
+                best_mse = mse
+
+        self.res.input_mask = best_input
+        self.res.fit(series_train, targets_train)
+        return self.res
+
+    def optimise_outputs(self, series_train, targets_train,
+                 series_test, targets_test,
+                 iterations = 100):
+
+        dimensions = self.res.adjacency.shape[0]
+
+        best_mse = 1e3
+        best_output = None
+        pbar = tqdm(range(iterations), leave = False)
+
+        states_train = self.res.forward(series_train, all_states = True)
+        states_test = self.res.forward(series_test, all_states=True)
+        for i in pbar:
+            output_mask  = np.zeros(dimensions, dtype = bool)
+            output_mask[np.random.randint(low = 0, high = dimensions, size=100)] = True
+
+            these_states_train = [state[output_mask] for state in states_train]
+            these_states_test = [state[output_mask] for state in states_test]
+
+            # self.res.output_mask = output_mask
+            # self.res.fit(series_train, targets_train)
+
+            self.res.prediction_model.fit(these_states_train, targets_train)
+
+            mse = np.sum((self.res.prediction_model.predict(these_states_test)[0] - targets_test) ** 2)
+            pbar.set_description(f"MSE: {mse}, best {best_mse}")
+
+            if mse < best_mse:
+                best_output = output_mask
+                best_mse = mse
+
+        self.res.output_mask = best_output
+        self.res.fit(series_train, targets_train)
+        return self.res
+
+
 
 
 if __name__ == "__main__":
@@ -158,12 +233,12 @@ if __name__ == "__main__":
 
     print(f"Fly graph {np.sum(fly_graph)} edges, rand graph {np.sum(rand_graph)} edges")
 
-    steps = 200
+    steps = 100
 
     train_ratio = 0.5
     n_in_train = int(train_ratio*steps)
 
-    ts = np.linspace(0,8*np.pi, num=steps)
+    ts = np.linspace(0,4*np.pi, num=steps)
 
     t_noise = np.random.randn(steps)
     # Add more noise in non-train section
@@ -187,9 +262,11 @@ if __name__ == "__main__":
     amp_saved_test = amp_saved
     amp_saved      = amp_saved[:n_in_train]
 
+    # model = DecisionTreeRegressor
+    # model_kwargs = {}
 
     model = RandomForestRegressor
-    model_kwargs = {"n_estimators":100, "verbose":1, "n_jobs":6}
+    model_kwargs = {"n_estimators":100, "n_jobs":6}
 
     # model = MLPRegressor
     # model_kwargs = {"hidden_layer_sizes":(100)}
@@ -199,14 +276,27 @@ if __name__ == "__main__":
 
     model_name = str(model).split('.')[-1].split("'")[0]
 
+
+
     fly_res = Reservoir(fly_graph, prediction_model=model, prediction_model_kwargs=model_kwargs)
     rand_res = Reservoir(rand_graph, prediction_model=model, prediction_model_kwargs=model_kwargs)
 
+    opt = Optimiser(fly_res)
+    fly_res = opt.optimise_inputs(amplitudes, frequencies,
+                 amplitudes_test, frequencies_test)
+    fly_res = opt.optimise_outputs(amplitudes, frequencies,
+                 amplitudes_test, frequencies_test)
+
+    opt = Optimiser(rand_res)
+    rand_res = opt.optimise_inputs(amplitudes, frequencies,
+                 amplitudes_test, frequencies_test)
+    rand_res = opt.optimise_outputs(amplitudes, frequencies,
+                 amplitudes_test, frequencies_test)
 
     # quit()
 
-    fly_res.fit(amplitudes, frequencies)
-    rand_res.fit(amplitudes, frequencies)
+    # fly_res.fit(amplitudes, frequencies)
+    # rand_res.fit(amplitudes, frequencies)
 
     # plt.hist([fly_res.prediction_model.feature_importances_,rand_res.prediction_model.feature_importances_],
     #          label = ["fly","random"],
@@ -223,6 +313,9 @@ if __name__ == "__main__":
 
     # fly_res.vis_graph(weights=None, name="fly", node_colours=fly_res.prediction_model.feature_importances_)
     # rand_res.vis_graph(weights=None, name="random", node_colours=rand_res.prediction_model.feature_importances_)
+
+    fly_res.vis_graph(weights=None, name="fly", node_colours=-0.5 * fly_res.input_mask + 0.5 * fly_res.output_mask)
+    rand_res.vis_graph(weights=None, name="random", node_colours=rand_res.input_mask + rand_res.output_mask)
 
     fly_prediction, fly_states = fly_res.predict(amplitudes_test)
     rand_prediction, rand_states = rand_res.predict(amplitudes_test)
