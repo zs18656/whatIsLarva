@@ -635,22 +635,22 @@ if __name__ == "__main__":
     Gcc = sorted(nx.connected_components(bter_graph), key=len, reverse=True)
     bter_graph = bter_graph.subgraph(Gcc[0])
 
-    bter_graph = nx.to_numpy_array(bter_graph)
+    bter_graph = nx.to_numpy_array(bter_graph, )
 
     bter_graph[np.identity(bter_graph.shape[0], dtype=bool)] = 0.
 
     print(f"Fly graph {np.sum(fly_graph)} edges, bter graph {np.sum(bter_graph)} edges, rand graph {np.sum(rand_graph)} edges")
 
-    steps = 3200
+    steps = 640
 
     train_ratio = 0.75
     n_in_train = int(train_ratio*steps)
 
-    ts = np.linspace(0,8*np.pi, num=steps)
+    ts = np.linspace(0,4*np.pi, num=steps)
 
     t_noise = np.random.randn(steps)
     # Add more noise in non-train section
-    t_noise *= 0.025
+    t_noise *= 0.#05
     # t_noise[n_in_train:] *= 0.05
 
 
@@ -677,9 +677,7 @@ if __name__ == "__main__":
     # model_kwargs = {"n_estimators":50, "n_jobs":6, "max_depth":6}
 
     model = MLPRegressor
-    model_kwargs = {"hidden_layer_sizes":(20),
-                    "activation":"tanh",
-                    }
+    model_kwargs = {"hidden_layer_sizes":(20)}
 
     # model = LinearRegression
     # model_kwargs = {"n_jobs":4}
@@ -709,15 +707,15 @@ if __name__ == "__main__":
     fly_res = ReservoirTorch(fly_graph,
                              prediction_model=model,
                              prediction_model_kwargs=model_kwargs,
-                             activation=torch.sigmoid)
+                             activation=torch.tanh)
     rand_res = ReservoirTorch(rand_graph,
                               prediction_model=model,
                               prediction_model_kwargs=model_kwargs,
-                              activation=torch.sigmoid)
+                              activation=torch.tanh)
     bter_res = ReservoirTorch(bter_graph,
                               prediction_model=model,
                               prediction_model_kwargs=model_kwargs,
-                              activation=torch.sigmoid)
+                              activation=torch.tanh)
 
     fly_res.fit(amplitudes, frequencies)
     rand_res.fit(amplitudes, frequencies)
@@ -755,7 +753,7 @@ if __name__ == "__main__":
     # fly_res.vis_graph(weights=None, name="fly", node_colours=-0.5 * fly_res.input_mask + 0.5 * fly_res.output_mask)
     # rand_res.vis_graph(weights=None, name="random", node_colours=-0.5*rand_res.input_mask + 0.5*rand_res.output_mask)
 
-    fly_prediction, fly_states = fly_res.predict(amplitudes_test)
+    fly_prediction,  fly_states  = fly_res.predict(amplitudes_test)
     rand_prediction, rand_states = rand_res.predict(amplitudes_test)
     bter_prediction, bter_states = bter_res.predict(amplitudes_test)
     # prediction_train = res.predict(amplitudes)
@@ -792,13 +790,13 @@ if __name__ == "__main__":
     # ax4.plot(ts, frequencies_test, label = "Real", c = "black")
     ax4.axvline(ts[n_in_train], c = "black", linestyle = ":", label = "Train Cutoff")
 
-    ax4.axhline(np.mean((fly_prediction - frequencies_test)**2), c="green", linestyle=":", label=f"MSE Fly {str(np.mean((fly_prediction - frequencies_test)**2))[:5]}")
-    ax4.axhline(np.mean((rand_prediction - frequencies_test)**2), c="blue", linestyle=":", label=f"MSE Rand {str(np.mean((rand_prediction - frequencies_test)**2))[:5]}")
-    ax4.axhline(np.mean((bter_prediction - frequencies_test) ** 2), c="red", linestyle=":", label=f"MSE BTER {str(np.mean((rand_prediction - frequencies_test) ** 2))[:5]}")
+    ax4.axhline(np.mean((fly_prediction - frequencies_test)**2), c="green", linestyle=":", label=f"MSE Fly {str(np.mean(((fly_prediction - frequencies_test)**2)[n_in_train:]))[:5]}")
+    ax4.axhline(np.mean((rand_prediction - frequencies_test)**2), c="blue", linestyle=":", label=f"MSE Rand {str(np.mean(((rand_prediction - frequencies_test)**2)[n_in_train:]))[:5]}")
+    ax4.axhline(np.mean((bter_prediction - frequencies_test) ** 2), c="red", linestyle=":", label=f"MSE BTER {str(np.mean(((rand_prediction - frequencies_test) ** 2)[n_in_train:]))[:5]}")
 
     ax4.scatter(ts, (fly_prediction - frequencies_test)**2, label = "Fly Predicted", s = 10, alpha = 0.75, c = "green")
     ax4.scatter(ts, (rand_prediction - frequencies_test)**2, label="Random Predicted", s=5, alpha=0.75, c = "blue")
-    ax4.scatter(ts, (bter_prediction - frequencies_test) ** 2, label="Random Predicted", s=5, alpha=0.75, c="red")
+    ax4.scatter(ts, (bter_prediction - frequencies_test) ** 2, label="BTER Predicted", s=5, alpha=0.75, c="red")
     ax4.set_yscale('log')
     # ax4.plot(ts, (default_predicted - frequencies_test)**2, label=f"Predicted {model_name}",  alpha = 0.5, color = "red")
     ax4.legend()
