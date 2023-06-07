@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd # only used to read the MNIST data set
 import networkx as nx
 
-from sklearnex import patch_sklearn
-patch_sklearn()
+# from sklearnex import patch_sklearn
+# patch_sklearn()
 
 from datetime import datetime
 import sklearn.tree
