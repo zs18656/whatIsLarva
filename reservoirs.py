@@ -44,6 +44,8 @@ class ReservoirTorch:
         # Wu should be initialised when .fit is called
         self.Wx = self.create_weights(spectral_radius=spectral_radius,
                                       sparsity=sparsity).to(self.device)
+        self.identity = torch.eye(self.Wx.shape[0]).to(self.device)
+        self.Wx = self.Wx + self.identity
         self.activation = activation
 
         self.input_mask = torch.ones(self.adjacency.shape[0], dtype=bool) if input_mask is None else input_mask
@@ -65,6 +67,7 @@ class ReservoirTorch:
         shape = tuple(self.adjacency.shape)
         w = (high - low) * torch.rand(shape[0] * shape[1]).reshape(shape) + low  # create the weight matrix
         w[self.adjacency == 0] = 0.
+
         if not sparsity is None:  # if sparsity is defined
             s = torch.rand(shape[0] * shape[1]).reshape(shape) < (1.0 - sparsity)  # create a sparse boolean matrix
             w *= s  # set weight matrix values to 0.0
@@ -76,9 +79,9 @@ class ReservoirTorch:
 
     def vis_graph(self, weights = None, name = "Reservoir_Graph", node_colours = None):
         if weights is not None:
-            G = nx.from_numpy_matrix(np.matrix(weights), create_using=nx.Graph)
+            G = nx.from_numpy_array(np.matrix(weights), create_using=nx.Graph)
         else:
-            G = nx.from_numpy_matrix(np.matrix(self.adjacency), create_using=nx.Graph)
+            G = nx.from_numpy_array(np.matrix(self.adjacency), create_using=nx.Graph)
 
         node_colours = node_colours if node_colours is not None else np.ones(G.order())
 
@@ -152,7 +155,7 @@ class ReservoirTorch:
             step_data = input[:, step].reshape((self.Wu.shape[1], 1))
             u = self.Wu @ step_data
             u[~self.input_mask] = 0.
-            x = self.activation(u + (self.Wx + torch.eye(x_size)) @ x)
+            x = self.activation(u + self.Wx @ x)
             states[:, step] = x.flatten()[out_mask]
 
 
@@ -202,9 +205,9 @@ class Reservoir:
 
     def vis_graph(self, weights = None, name = "Reservoir_Graph", node_colours = None):
         if weights is not None:
-            G = nx.from_numpy_matrix(np.matrix(weights), create_using=nx.Graph)
+            G = nx.from_numpy_array(np.matrix(weights), create_using=nx.Graph)
         else:
-            G = nx.from_numpy_matrix(np.matrix(self.adjacency), create_using=nx.Graph)
+            G = nx.from_numpy_array(np.matrix(self.adjacency), create_using=nx.Graph)
 
         node_colours = node_colours if node_colours is not None else np.ones(G.order())
 
@@ -297,7 +300,7 @@ class Optimiser:
         self.n_individuals = n_individuals
         self.n_epochs = n_epochs
         self.keep_top = keep_top
-        self.graph = nx.from_numpy_matrix(self.res.adjacency)
+        self.graph = nx.from_numpy_array(self.res.adjacency)
         self.mutation_noise = mutation_noise
         self.input_size = input_size
         self.output_size = output_size
@@ -602,7 +605,12 @@ def vis_with_states(res, series, targets, directory = "frames"):
 
 
 if __name__ == "__main__":
-    fly_mat = pd.read_csv('/Users/alexdavies/Projects/whatIsLarva/science.add9330_data_s1_to_s4/Supplementary-Data-S1/all-all_connectivity_matrix.csv').drop(columns=['Unnamed: 0'])
+    pwd = os.getcwd()
+    data_path = os.path.join(pwd, "science.add9330_data_s1_to_s4/Supplementary-Data-S1/all-all_connectivity_matrix.csv")
+    # fly_mat = pd.read_csv('/Users/alexdavies/Projects/whatIsLarva/science.add9330_data_s1_to_s4/Supplementary-Data-S1/all-all_connectivity_matrix.csv').drop(columns=['Unnamed: 0'])
+    fly_mat = pd.read_csv(
+        data_path).drop(
+        columns=['Unnamed: 0'])
     fly_mat = fly_mat.to_numpy()
     #
 
@@ -616,7 +624,7 @@ if __name__ == "__main__":
     rand_graph = nx.fast_gnp_random_graph(fly_graph.shape[0], np.sum(fly_graph) / (fly_graph.shape[0] ** 2))
     rand_graph = nx.to_numpy_array(rand_graph)
 
-    fly_nx = nx.from_numpy_matrix(fly_graph, create_using=nx.Graph)
+    fly_nx = nx.from_numpy_array(fly_graph, create_using=nx.Graph)
     print(fly_nx)
     bter_start = time()
     bt = BTER(fly_nx)
