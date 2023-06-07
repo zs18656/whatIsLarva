@@ -144,8 +144,8 @@ class ReservoirTorch:
 
         assert self.Wu is not None, f"Wu has not been initialised, please call .fit"
         output_dim = torch.sum(self.output_mask) if not all_states else n_steps
-        x = torch.zeros((x_size, 1))
-        states = torch.zeros((output_dim, n_steps))
+        x = torch.zeros((x_size, 1)).to(self.device)
+        states = torch.zeros((output_dim, n_steps)).to(self.device)
         if all_states:
             out_mask = torch.ones(output_dim)
         else:
