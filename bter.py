@@ -213,7 +213,7 @@ class BTER:
         print(f"{np.sum(node_degrees)} left to attach")
         iter_counter = 0
         while np.sum(node_degrees > 0) > 1 and G_sampled.number_of_edges() < self.G_original.number_of_edges():
-            if iter_counter > 50000:
+            if iter_counter > 25000:
                 break
             # print(np.sum(node_degrees), np.max(node_degrees))
             probabilities = node_excesses / np.sum(node_excesses)

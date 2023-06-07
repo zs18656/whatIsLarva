@@ -1,16 +1,23 @@
 import numpy as np
 import pandas as pd # only used to read the MNIST data set
 import networkx as nx
+
+from sklearnex import patch_sklearn
+patch_sklearn()
+
 from datetime import datetime
 import sklearn.tree
 from scipy.signal import convolve2d
 import matplotlib.pyplot as plt
 from bter import BTER
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+
+
 import itertools
 import random
 from time import time
 from tqdm import tqdm
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor, plot_tree
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
@@ -20,6 +27,7 @@ from sklearn.decomposition import PCA
 import concurrent.futures as cf
 import imageio
 import torch
+from tasks import *
 from sklearn.inspection import permutation_importance
 
 from sklearn.svm import SVC, LinearSVC
@@ -107,7 +115,8 @@ class ReservoirTorch:
         # plt.show()
 
     def fit(self, series, targets):
-        self.Wu = 0.25*torch.ones([self.Wx.shape[0], series.shape[0]]).to(self.device)
+        # self.Wu = torch.ones([self.Wx.shape[0], series.shape[0]]).to(self.device)
+        self.Wu = torch.randn([self.Wx.shape[0], series.shape[0]]).to(self.device)
 
         # Essentially training data, currently no warm-up
         embedded_states = self.forward(torch.Tensor(series).to(self.device))
@@ -133,7 +142,7 @@ class ReservoirTorch:
 
         prediction = self.prediction_model.predict(torch.transpose(embedded_states, 0, 1).to("cpu"))
 
-        return prediction, embedded_states
+        return prediction, embedded_states.cpu()
 
 
     # Alex's function for a simple reservoir operation - please sense check!
@@ -150,7 +159,6 @@ class ReservoirTorch:
             out_mask = torch.ones(output_dim)
         else:
             out_mask = self.output_mask
-
         for step in tqdm(range(n_steps), leave=False):
             step_data = input[:, step].reshape((self.Wu.shape[1], 1))
             u = self.Wu @ step_data
@@ -158,8 +166,29 @@ class ReservoirTorch:
             x = self.activation(u + self.Wx @ x)
             states[:, step] = x.flatten()[out_mask]
 
-
         return states
+
+    def autoregression(self, start_value, n_steps):
+        start_value = torch.Tensor(np.expand_dims(np.array(start_value), axis = 0)).to(self.device)
+        output_dim = self.Wx.shape[0]
+
+        predictions = torch.zeros((1, n_steps)).to(self.device)
+        states = torch.zeros((output_dim, n_steps)).to(self.device)
+        predictions[0, :] = start_value
+
+        start = time()
+        pbar = tqdm(range(1, n_steps))
+        for i in pbar:
+            # print(predictions[:, i-1], predictions[:, i-1].shape)
+            pred, state = self.predict(torch.unsqueeze(predictions[:, i-1], 0))
+            pbar.set_description(f"{pred}, {predictions[:, i-1]}")
+            # print(state.flatten().to(self.device), states[:,i], states.shape)
+            predictions[:, i], states[:, i] = torch.Tensor(pred).to(self.device), state.flatten().to(self.device)
+        print(f"Per prediction time: {(time() - start) / n_steps}")
+
+        return predictions.flatten().cpu().numpy(), states.cpu()
+
+
 
 class Reservoir:
     def __init__(self,
@@ -288,9 +317,9 @@ class Reservoir:
 
 class Optimiser:
     def __init__(self, res,
-                         n_individuals = 240,
-                         n_epochs = 1000,
-                         keep_top = 3,
+                         n_individuals = 48,
+                         n_epochs = 100,
+                         keep_top = 4,
                          mutation_noise = 0.01,
                          input_size = 100,
                          output_size = 100,
@@ -300,7 +329,7 @@ class Optimiser:
         self.n_individuals = n_individuals
         self.n_epochs = n_epochs
         self.keep_top = keep_top
-        self.graph = nx.from_numpy_array(self.res.adjacency)
+        self.graph = nx.from_numpy_array(self.res.adjacency.cpu().numpy())
         self.mutation_noise = mutation_noise
         self.input_size = input_size
         self.output_size = output_size
@@ -641,43 +670,23 @@ if __name__ == "__main__":
 
     print(f"Fly graph {np.sum(fly_graph)} edges, bter graph {np.sum(bter_graph)} edges, rand graph {np.sum(rand_graph)} edges")
 
-    steps = 640
 
-    train_ratio = 0.75
-    n_in_train = int(train_ratio*steps)
+    ts, amplitudes, frequencies, amplitudes_test, frequencies_test = frequency_prediction_data()
 
-    ts = np.linspace(0,4*np.pi, num=steps)
+    ts, amplitudes, frequencies, amplitudes_test, frequencies_test = autoregression_data()
 
-    t_noise = np.random.randn(steps)
-    # Add more noise in non-train section
-    t_noise *= 0.#05
-    # t_noise[n_in_train:] *= 0.05
-
-
-    frequencies = np.cos(ts)
-    amp_saved = np.sin(np.pi*frequencies)  + t_noise
-
-    amplitudes = np.copy(amp_saved).reshape((1, -1))
-    amplitudes = np.concatenate((amplitudes, amplitudes), axis=0)
-    # print(frequencies.shape)
-
-    frequencies_test = frequencies
-    frequencies = frequencies[:n_in_train]
-
-    amplitudes_test = amplitudes
-    amplitudes      = amplitudes[:,:n_in_train]
-
-    amp_saved_test = amp_saved
-    amp_saved      = amp_saved[:n_in_train]
+    print(amplitudes.shape)
 
     # model = DecisionTreeRegressor
     # model_kwargs = {"max_depth":5}
 
-    # model = RandomForestRegressor
-    # model_kwargs = {"n_estimators":50, "n_jobs":6, "max_depth":6}
+    model = RandomForestRegressor
+    model_kwargs = {"n_estimators":150, "n_jobs":3}
 
-    model = MLPRegressor
-    model_kwargs = {"hidden_layer_sizes":(20)}
+    # model = MLPRegressor
+    # model_kwargs = {"hidden_layer_sizes":(100),
+    #                 "activation":"tanh",
+    #                 "max_iter":20000}
 
     # model = LinearRegression
     # model_kwargs = {"n_jobs":4}
@@ -687,20 +696,7 @@ if __name__ == "__main__":
 
     model_name = str(model).split('.')[-1].split("'")[0]
 
-    # opt = Optimiser(fly_res)
-    # fly_res = opt.optimise_inputs(amplitudes, frequencies,
-    #              amplitudes_test, frequencies_test)
-    # fly_res = opt.optimise_outputs(amplitudes, frequencies,
-    #              amplitudes_test, frequencies_test)
 
-
-
-
-    # opt = Optimiser(rand_res)
-    # rand_res = opt.optimise_inputs(amplitudes, frequencies,
-    #              amplitudes_test, frequencies_test)
-    # rand_res = opt.optimise_outputs(amplitudes, frequencies,
-    #              amplitudes_test, frequencies_test)
 
 
     torch_start = time()
@@ -717,35 +713,34 @@ if __name__ == "__main__":
                               prediction_model_kwargs=model_kwargs,
                               activation=torch.tanh)
 
+
+    opt = Optimiser(fly_res)
+    fly_res = opt.optimise_inputs(amplitudes, frequencies,
+                 amplitudes_test, frequencies_test)
+    # fly_res = opt.optimise_outputs(amplitudes, frequencies,
+    #              amplitudes_test, frequencies_test)
+
+
+
+
+    opt = Optimiser(rand_res)
+    rand_res = opt.optimise_inputs(amplitudes, frequencies,
+                 amplitudes_test, frequencies_test)
+    # rand_res = opt.optimise_outputs(amplitudes, frequencies,
+    #              amplitudes_test, frequencies_test)
+
+
+    opt = Optimiser(bter_res)
+    bter_res = opt.optimise_inputs(amplitudes, frequencies,
+                 amplitudes_test, frequencies_test)
+    # rand_res = opt.optimise_outputs(amplitudes, frequencies,
+    #              amplitudes_test, frequencies_test)
+
     fly_res.fit(amplitudes, frequencies)
     rand_res.fit(amplitudes, frequencies)
     bter_res.fit(amplitudes, frequencies)
 
     print(f"\n\ntorch fitting time {time() - torch_start}")
-
-    # numpy_start = time()
-    # fly_res = Reservoir(fly_graph, prediction_model=model, prediction_model_kwargs=model_kwargs)
-    # rand_res = Reservoir(rand_graph, prediction_model=model, prediction_model_kwargs=model_kwargs)
-    #
-    # fly_res.fit(amplitudes, frequencies)
-    # rand_res.fit(amplitudes, frequencies)
-    #
-    # print(f"numpy fitting time {time() - numpy_start}\n\n")
-
-    # vis_with_states(fly_res, amplitudes_test, frequencies_test, directory="frames_graph")
-
-    # plt.hist([fly_res.prediction_model.feature_importances_,rand_res.prediction_model.feature_importances_],
-    #          label = ["fly","random"],
-    #          bins=100)
-    # plt.legend()
-    # plt.yscale('log')
-    # plt.xscale('log')
-    # # plt.hist(, label = "random")
-    # plt.show()
-    # quit()
-
-    # print(fly_res.prediction_model.feature_importances_)
-    # print(rand_res.prediction_model.feature_importances_)
 
     # fly_res.vis_graph(weights=None, name="fly", node_colours=fly_res.prediction_model.feature_importances_)
     # rand_res.vis_graph(weights=None, name="random", node_colours=rand_res.prediction_model.feature_importances_)
@@ -756,18 +751,26 @@ if __name__ == "__main__":
     fly_prediction,  fly_states  = fly_res.predict(amplitudes_test)
     rand_prediction, rand_states = rand_res.predict(amplitudes_test)
     bter_prediction, bter_states = bter_res.predict(amplitudes_test)
-    # prediction_train = res.predict(amplitudes)
 
-    # default_regressor = model(**model_kwargs).fit(amplitudes.transpose(), frequencies)
-    # default_predicted = default_regressor.predict(amplitudes_test.transpose())
-    # default_predicted_train = default_regressor.predict(amplitudes.transpose())
+    # fly_prediction,  fly_states  = fly_res.autoregression(frequencies_test[0], n_steps=frequencies_test.shape[0])
+    # rand_prediction, rand_states = rand_res.autoregression(frequencies_test[0], n_steps=frequencies_test.shape[0])
+    # bter_prediction, bter_states = bter_res.autoregression(frequencies_test[0], n_steps=frequencies_test.shape[0])
+
+    #
+    # fly_states = fly_states.cpu()
+    # rand_states = rand_states.cpu()
+    # bter_states = bter_states.cpu()
 
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(ncols=2, nrows=2, figsize=(12,12))
 
     ax1.set_title("Input signal")
     ax2.set_title("Std. Dev. of Reservoir State")
-    ax3.set_title("Frequency Prediction")
+    ax3.set_title("Target & Prediction")
     ax4.set_title(f"Squared Error")
+
+    n_in_train = frequencies.shape[0]
+    amp_saved_test = amplitudes_test[0,:]
+    amp_saved = amplitudes[0,:n_in_train]
 
     ax1.plot(ts, amp_saved_test)
     ax1.axvline(ts[n_in_train], c = "black", linestyle = ":")
@@ -776,29 +779,25 @@ if __name__ == "__main__":
     ax2.scatter(ts, torch.std(rand_states, dim = 0), s = 2, c="blue", label="Random States")
     ax2.scatter(ts, torch.std(bter_states, dim=0), s=2, c="red", label="BTER States")
 
-    # ax2.plot(ts, frequencies_test, label = "Real")
-    # ax2.plot(ts[200:], prediction, label = "Predicted")
-    # ax2.plot(ts[200:], default_predicted, label="Predicted (Default)")
     ax3.axvline(ts[n_in_train], c = "black", linestyle = ":")
-    ax3.plot(ts, frequencies_test, label = "Real", c = "black")
+
+    ax3.plot(ts, frequencies_test, label = "Real", c = "black", alpha = 0.5)
+    print(ts.shape, fly_prediction.shape)
     ax3.scatter(ts, fly_prediction, label = "Fly Predicted", s = 4, alpha = 0.75, c = "green")
     ax3.scatter(ts, rand_prediction, label="Random Predicted", s=2, alpha=0.75, c = "blue")
     ax3.scatter(ts, bter_prediction, label="Random Predicted", s=2, alpha=0.75, c="red")
-    # ax3.scatter(ts, default_predicted, label=f"Predicted {model_name}", s = 2, alpha = 0.5, color = "red")
-    # ax3.legend()
 
-    # ax4.plot(ts, frequencies_test, label = "Real", c = "black")
+
     ax4.axvline(ts[n_in_train], c = "black", linestyle = ":", label = "Train Cutoff")
-
+    print(fly_prediction, frequencies_test)
     ax4.axhline(np.mean((fly_prediction - frequencies_test)**2), c="green", linestyle=":", label=f"MSE Fly {str(np.mean(((fly_prediction - frequencies_test)**2)[n_in_train:]))[:5]}")
     ax4.axhline(np.mean((rand_prediction - frequencies_test)**2), c="blue", linestyle=":", label=f"MSE Rand {str(np.mean(((rand_prediction - frequencies_test)**2)[n_in_train:]))[:5]}")
-    ax4.axhline(np.mean((bter_prediction - frequencies_test) ** 2), c="red", linestyle=":", label=f"MSE BTER {str(np.mean(((rand_prediction - frequencies_test) ** 2)[n_in_train:]))[:5]}")
+    ax4.axhline(np.mean((bter_prediction - frequencies_test) ** 2), c="red", linestyle=":", label=f"MSE BTER {str(np.mean(((bter_prediction - frequencies_test) ** 2)[n_in_train:]))[:5]}")
 
     ax4.scatter(ts, (fly_prediction - frequencies_test)**2, label = "Fly Predicted", s = 10, alpha = 0.75, c = "green")
     ax4.scatter(ts, (rand_prediction - frequencies_test)**2, label="Random Predicted", s=5, alpha=0.75, c = "blue")
     ax4.scatter(ts, (bter_prediction - frequencies_test) ** 2, label="BTER Predicted", s=5, alpha=0.75, c="red")
     ax4.set_yscale('log')
-    # ax4.plot(ts, (default_predicted - frequencies_test)**2, label=f"Predicted {model_name}",  alpha = 0.5, color = "red")
     ax4.legend()
 
 
