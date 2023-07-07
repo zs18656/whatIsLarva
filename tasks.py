@@ -56,7 +56,7 @@ def frequency_prediction_data(steps = 1200, train_ratio = 0.75, n_cycles = 3, no
 
     return ts, amplitudes, frequencies, amplitudes_test, frequencies_test
 
-def autoregression_data(steps = 400, train_ratio = 0.25, total_range = 16*np.pi, noise_amount = 0.1, function = np.sin):
+def autoregression_data(steps = 400, train_ratio = 0.25, total_range = 16*np.pi, noise_amount = 0.025, function = np.sin):
     n_in_train = int(train_ratio*steps)
     ts = np.linspace(0, total_range, num=steps + 1) # +1 for autoregression
 

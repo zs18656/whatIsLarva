@@ -1,9 +1,12 @@
 import numpy as np
 import pandas as pd # only used to read the MNIST data set
 import networkx as nx
-
-# from sklearnex import patch_sklearn
-# patch_sklearn()
+try:
+    from sklearnex import patch_sklearn
+    patch_sklearn()
+except:
+    print("SKLEARNEX not found, presumably running on mac")
+    pass
 
 from datetime import datetime
 import sklearn.tree
@@ -159,6 +162,7 @@ class ReservoirTorch:
             out_mask = torch.ones(output_dim)
         else:
             out_mask = self.output_mask
+
         for step in tqdm(range(n_steps), leave=False):
             step_data = input[:, step].reshape((self.Wu.shape[1], 1))
             u = self.Wu @ step_data
@@ -629,7 +633,35 @@ def vis_with_states(res, series, targets, directory = "frames"):
 
 
 
+def load_fly(return_tensor = True):
+    pwd = os.getcwd()
+    data_path = os.path.join(pwd, "science.add9330_data_s1_to_s4/Supplementary-Data-S1/all-all_connectivity_matrix.csv")
+    # fly_mat = pd.read_csv('/Users/alexdavies/Projects/whatIsLarva/science.add9330_data_s1_to_s4/Supplementary-Data-S1/all-all_connectivity_matrix.csv').drop(columns=['Unnamed: 0'])
+    fly_mat = pd.read_csv(
+        data_path).drop(
+        columns=['Unnamed: 0'])
+    fly_mat = fly_mat.to_numpy()
+    #
 
+    # Could be fun to trim only to multiple-synapse connections?
+    fly_mat[fly_mat > 1] = 1
+    fly_mat[fly_mat != 1] = 0
+    fly_mat[np.identity(fly_mat.shape[0], dtype=bool)] = 0.
+    fly_graph = fly_mat
+
+    if return_tensor:
+        return torch.Tensor(fly_graph)
+    else:
+        return fly_graph
+
+def create_random(fly_graph, return_tensor = True):
+    rand_graph = nx.fast_gnp_random_graph(fly_graph.shape[0], np.sum(fly_graph) / (fly_graph.shape[0] ** 2))
+    rand_graph = nx.to_numpy_array(rand_graph)
+
+    if return_tensor:
+        return torch.Tensor(rand_graph)
+    else:
+        return rand_graph
 
 
 
@@ -673,7 +705,7 @@ if __name__ == "__main__":
 
     ts, amplitudes, frequencies, amplitudes_test, frequencies_test = frequency_prediction_data()
 
-    ts, amplitudes, frequencies, amplitudes_test, frequencies_test = autoregression_data()
+    # ts, amplitudes, frequencies, amplitudes_test, frequencies_test = autoregression_data()
 
     print(amplitudes.shape)
 
@@ -714,27 +746,23 @@ if __name__ == "__main__":
                               activation=torch.tanh)
 
 
-    opt = Optimiser(fly_res)
-    fly_res = opt.optimise_inputs(amplitudes, frequencies,
-                 amplitudes_test, frequencies_test)
-    # fly_res = opt.optimise_outputs(amplitudes, frequencies,
+    # opt = Optimiser(fly_res)
+    # fly_res = opt.optimise_inputs(amplitudes, frequencies,
     #              amplitudes_test, frequencies_test)
-
-
-
-
-    opt = Optimiser(rand_res)
-    rand_res = opt.optimise_inputs(amplitudes, frequencies,
-                 amplitudes_test, frequencies_test)
-    # rand_res = opt.optimise_outputs(amplitudes, frequencies,
+    # # fly_res = opt.optimise_outputs(amplitudes, frequencies,
+    # #              amplitudes_test, frequencies_test)
+    #
+    # opt = Optimiser(rand_res)
+    # rand_res = opt.optimise_inputs(amplitudes, frequencies,
     #              amplitudes_test, frequencies_test)
-
-
-    opt = Optimiser(bter_res)
-    bter_res = opt.optimise_inputs(amplitudes, frequencies,
-                 amplitudes_test, frequencies_test)
-    # rand_res = opt.optimise_outputs(amplitudes, frequencies,
+    # # rand_res = opt.optimise_outputs(amplitudes, frequencies,
+    # #              amplitudes_test, frequencies_test)
+    #
+    # opt = Optimiser(bter_res)
+    # bter_res = opt.optimise_inputs(amplitudes, frequencies,
     #              amplitudes_test, frequencies_test)
+    # # rand_res = opt.optimise_outputs(amplitudes, frequencies,
+    # #              amplitudes_test, frequencies_test)
 
     fly_res.fit(amplitudes, frequencies)
     rand_res.fit(amplitudes, frequencies)
