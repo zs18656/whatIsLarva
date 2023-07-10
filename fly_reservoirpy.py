@@ -4,10 +4,33 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 from reservoirpy.nodes import Reservoir
+from reservoirpy.nodes import ESN
 
-def random_weights(graph):
-    random_assignment = np.random.random(graph.shape)
-    return graph * random_assignment
+
+# def create_weights(self, low=-1.0, high=1.0, sparsity=None, spectral_radius=None):
+#     shape = tuple(self.adjacency.shape)
+#     w = (high - low) * torch.rand(shape[0] * shape[1]).reshape(shape) + low  # create the weight matrix
+#     w[self.adjacency == 0] = 0.
+#
+#     if not sparsity is None:  # if sparsity is defined
+#         s = torch.rand(shape[0] * shape[1]).reshape(shape) < (1.0 - sparsity)  # create a sparse boolean matrix
+#         w *= s  # set weight matrix values to 0.0
+#     if not spectral_radius is None:  # if spectral radius is defined
+#         sp = torch.max(torch.abs(torch.linalg.eig(w)[0]))  # compute current spectral radius
+#         w *= (spectral_radius) / sp  # adjust weight matrix to acheive specified spectral radius
+#     return w
+
+def random_weights(graph, sr = 0.1):
+    w = 2 * np.random.random(graph.shape) - 1
+    w[graph == 0] = 0.
+
+    if not sr is None:  # if spectral radius is defined
+        sp = np.max(np.abs(np.linalg.eig(w)[0]))  # compute current spectral radius
+        w *= (sr) / sp  # adjust weight matrix to acheive specified spectral radius
+    return w
+
+
+    # return graph * random_assignment
 
 def load_fly(return_tensor = False):
     pwd = os.getcwd()
@@ -93,7 +116,7 @@ def objective(dataset, config, *, iss, N, sr, lr, ridge, seed):
     return {'loss': np.mean(losses),
             'r2': np.mean(r2s)}
 
-def objective_given_graph(dataset, config, *, graph_to_use, iss, sr, lr, ridge, seed):
+def objective_given_graph(dataset, config, *, graph_to_use, iss, sr, lr, rc_connectivity, ridge, seed):
 
     # This step may vary depending on what you put inside 'dataset'
     train_data, validation_data = dataset
@@ -108,24 +131,38 @@ def objective_given_graph(dataset, config, *, graph_to_use, iss, sr, lr, ridge, 
     # to be sure there is no bias in the results
     # due to initialization.
     variable_seed = seed
-    if graph_to_use == "fly":
-        graph = load_fly()
-    else:
-        graph = create_random(load_fly())
+    # if graph_to_use == "fly":
+    graph = load_fly()
+    # else:
+    #     graph = load_fly()
+    n_neurons = graph.shape[0]
+    # print(graph.shape)
+        # graph = create_random(load_fly())
 
     losses = []; r2s = [];
     for n in range(instances):
         # Build your model given the input parameters
-        reservoir_graph = random_weights(graph)
-        reservoir = Reservoir(W = reservoir_graph,
-                              sr=sr,
-                              lr=lr,
-                              inut_scaling=iss,
-                              seed=variable_seed)
+
+        if graph_to_use == "fly":
+            reservoir_graph = random_weights(graph, sr = sr)
+            reservoir = Reservoir(W = reservoir_graph,
+                                  # sr=sr,
+                                  lr=lr,
+                                  inut_scaling=iss,
+                                  seed=variable_seed)
+        else:
+            # print(graph_to_use, n, iss, sr, lr, rc_connectivity, ridge, seed)
+            reservoir = Reservoir(units = n_neurons,
+                                  rc_connectivity = rc_connectivity,
+                                  sr=sr,
+                                  lr=lr,
+                                  inut_scaling=iss,
+                                  seed=variable_seed)
 
         readout = Ridge(ridge=ridge)
 
-        model = reservoir >> readout
+        # model = reservoir >> readout
+        model = ESN(reservoir=reservoir, readout=readout, workers=4)
 
 
         # Train your model and test your model.
@@ -191,10 +228,7 @@ from reservoirpy.observables import nrmse, rsquare
 #
 # initv := x(0) = 1, y(0) = 1, z(0) = 0
 
-timesteps = 15000
-# x0 = [0.37926545, 0.058339, -0.08167691]
-# X = doublescroll(timesteps, x0=x0, method="RK23")
-X = lorenz(timesteps, h=0.01)
+
 # X = multiscroll(timesteps)
 # fig = plt.figure(figsize=(10, 10))
 # ax  = fig.add_subplot(111, projection='3d')
@@ -212,15 +246,16 @@ X = lorenz(timesteps, h=0.01)
 
 hyperopt_config_fly = {
     "exp": f"hyperopt-multiscroll-fly", # the experimentation name
-    "hp_max_evals": 50,             # the number of differents sets of parameters hyperopt has to try
+    "hp_max_evals": 100,             # the number of differents sets of parameters hyperopt has to try
     "hp_method": "random",           # the method used by hyperopt to chose those sets (see below)
     "seed": 42,                      # the random state seed, to ensure reproducibility
     "instances_per_trial": 3,        # how many random ESN will be tried with each sets of parameters
     "hp_space": {                    # what are the ranges of parameters explored
         "graph_to_use": ["choice", "fly"],
-        "sr": ["loguniform", 1e-2, 10],   # the spectral radius is log-uniformly distributed between 1e-6 and 10
+        "sr": ["loguniform", 1e-6, 10],   # the spectral radius is log-uniformly distributed between 1e-6 and 10
         "lr": ["loguniform", 1e-3, 1],    # idem with the leaking rate, from 1e-3 to 1
         "iss": ["uniform", 0.1, 0.9],           # the input scaling is fixed
+        "rc_connectivity": ["choice", None],
         "ridge": ["choice", 1e-7],        # and so is the regularization parameter.
         "seed": ["choice", 1234]          # an other random seed for the ESN initialization
     }
@@ -228,7 +263,7 @@ hyperopt_config_fly = {
 
 hyperopt_config_rand = {
     "exp": f"hyperopt-multiscroll-rand", # the experimentation name
-    "hp_max_evals": 50,             # the number of differents sets of parameters hyperopt has to try
+    "hp_max_evals": 10,             # the number of differents sets of parameters hyperopt has to try
     "hp_method": "random",           # the method used by hyperopt to chose those sets (see below)
     "seed": 42,                      # the random state seed, to ensure reproducibility
     "instances_per_trial": 3,        # how many random ESN will be tried with each sets of parameters
@@ -237,6 +272,7 @@ hyperopt_config_rand = {
         "sr": ["loguniform", 1e-6, 10],   # the spectral radius is log-uniformly distributed between 1e-6 and 10
         "lr": ["loguniform", 1e-4, 1],    # idem with the leaking rate, from 1e-3 to 1
         "iss": ["uniform", 0.1, 0.9],           # the input scaling is fixed
+        "rc_connectivity": ["uniform", 0.001, 0.1],
         "ridge": ["choice", 1e-7],        # and so is the regularization parameter.
         "seed": ["choice", 1234]          # an other random seed for the ESN initialization
     }
@@ -244,6 +280,8 @@ hyperopt_config_rand = {
 
 
 import json
+import reservoirpy as rpy
+rpy.verbosity(0)
 from reservoirpy.hyper import research
 from reservoirpy.hyper import plot_hyperopt_report
 
@@ -255,21 +293,58 @@ with open(f"{hyperopt_config_fly['exp']}.config.json", "w+") as f:
 with open(f"{hyperopt_config_rand['exp']}.config.json", "w+") as f:
     json.dump(hyperopt_config_rand, f)
 
-train_len = 12000
+
+timesteps = 3000
+# x0 = [0.37926545, 0.058339, -0.08167691]
+# X = doublescroll(timesteps, x0=x0, method="RK23")
+X = lorenz(timesteps, h=0.01)
+
+train_len = 2000
 X_train = X[:train_len]
 y_train = X[1 : train_len + 1]
 X_test = X[train_len : -1]
 y_test = X[train_len + 1:]
 dataset = ((X_train, y_train), (X_test, y_test))
 
-fly_best = {'input_scaling': 0.5872833192706555, 'lr': 0.15492403550483738, 'sr': 0.07071032186253305}
-rand_best = {'input_scaling': 0.723792790570117, 'lr': 0.0236187254130727, 'sr': 0.0014791230744112718}
+
+
+# fly_best = {'input_scaling': 0.5872833192706555, 'lr': 0.15492403550483738, 'sr': 0.07071032186253305}
+# rand_best = {'input_scaling': 0.723792790570117, 'lr': 0.0236187254130727, 'sr': 0.0014791230744112718}
+
+
+fly_best = research(objective_given_graph,  dataset, f"{hyperopt_config_fly['exp']}.config.json", ".")[0]
+
+
+# fly_best = {'graph_to_use': 0, 'iss': 0.37845314451135315, 'lr': 0.11649077672256467, 'rc_connectivity': 0, 'ridge': 0, 'seed': 0, 'sr': 4.725357277915157}
+rand_best = {'graph_to_use': 0, 'iss': 0.24168746352116566, 'lr': 0.9487053215849356, 'rc_connectivity': 0.01646669730864767, 'ridge': 0, 'seed': 0, 'sr': 8.753193828153007}# research(objective_given_graph,  dataset, f"{hyperopt_config_rand['exp']}.config.json", ".")[0]
+
+print(fly_best)
+print(rand_best)
+
+timesteps = 9000
+# x0 = [0.37926545, 0.058339, -0.08167691]
+# X = doublescroll(timesteps, x0=x0, method="RK23")
+X = lorenz(timesteps, h=0.01)
+
+train_len = 6000
+X_train = X[:train_len]
+y_train = X[1 : train_len + 1]
+X_test = X[train_len : -1]
+y_test = X[train_len + 1:]
+dataset = ((X_train, y_train), (X_test, y_test))
+
 
 fly_graph = load_fly()
 rand_graph = create_random(fly_graph)
 
-fly_reservoir = random_weights(fly_graph)
-fly_reservoir = Reservoir(W=fly_reservoir,**fly_best)
+fly_reservoir = random_weights(fly_graph, sr = fly_best["sr"])
+# fly_reservoir = Reservoir(W=fly_reservoir,
+#                           iss = fly_best[""])
+
+fly_reservoir = Reservoir(W=fly_reservoir,
+                      sr=fly_best["sr"],
+                      lr=fly_best["lr"],
+                      inut_scaling=fly_best["iss"])
 
 fly_readout = Ridge(ridge=1e-7)
 fly_model = fly_reservoir >> fly_readout
@@ -278,8 +353,14 @@ fly_model = fly_reservoir >> fly_readout
 fly_reservoir = fly_model.fit(X_train, y_train)
 fly_predictions = fly_reservoir.run(X)
 
-rand_reservoir = random_weights(rand_graph)
-rand_reservoir = Reservoir(W=rand_reservoir,**rand_best)
+# rand_reservoir = random_weights(rand_graph)
+# rand_reservoir = Reservoir(units=fly_graph.shape[0],**rand_best)
+
+rand_reservoir = Reservoir(units=fly_graph.shape[0],
+                      rc_connectivity=rand_best["rc_connectivity"],
+                      sr=rand_best["sr"],
+                      lr=rand_best["lr"],
+                      inut_scaling=rand_best["iss"])
 
 rand_readout = Ridge(ridge=1e-7)
 rand_model = rand_reservoir >> rand_readout
@@ -320,21 +401,29 @@ ax.grid(False)
 # ax.set_ylim([-30,30])
 # ax.set_zlim([0,30])
 
-for i in range(500, timesteps-1):
+for i in range(timesteps-1):
     if i == timesteps - 2:
-        ax.plot(X[i:i+2, 0], X[i:i+2, 1], X[i:i+2, 2], color = "Blue", label = "Original Data", lw = 0.)
+        ax.plot(X[i:i+2, 0], X[i:i+2, 1], X[i:i+2, 2], color = "cyan", label = "Original Data", lw = 0.)
     else:
         # ax.plot(X[i:i+2, 0], X[i:i+2, 1], X[i:i+2, 2], color = plt.cm.viridis(i  / (timesteps - 1)), alpha = 0.5 + 0.5 * (i  / (timesteps - 1)), lw=0.2)
-        ax.plot(X[i:i + 2, 0], X[i:i + 2, 1], X[i:i + 2, 2], color="blue",
-                alpha=0.5 + 0.5 * (i / (timesteps - 1)), lw=0.2)
+        ax.plot(X[i:i + 2, 0], X[i:i + 2, 1], X[i:i + 2, 2], color="cyan",
+                alpha=0.75 + 0.25 * (i / (timesteps - 1)), lw=0.2)
         
-for i in range(500, timesteps-1):
+for i in range(timesteps-1):
     if i == timesteps - 2:
         ax.plot(fly_predictions[i:i+2, 0], fly_predictions[i:i+2, 1], fly_predictions[i:i+2, 2], color = "Orange", label = "Fly Brain", lw=0.)
     else:
         # ax.plot(fly_predictions[i:i+2, 0], fly_predictions[i:i+2, 1], fly_predictions[i:i+2, 2], color =plt.cm.inferno(i  / (timesteps - 1)), alpha = 0.5 + 0.5 * (i  / (timesteps - 1)), lw=0.2)
         ax.plot(fly_predictions[i:i + 2, 0], fly_predictions[i:i + 2, 1], fly_predictions[i:i + 2, 2],
-                color="orange", alpha=0.5 + 0.5 * (i / (timesteps - 1)), lw=0.2)
+                color="orange", alpha=0.75 + 0.25 * (i / (timesteps - 1)), lw=0.2)
+
+for i in range(timesteps-1):
+    if i == timesteps - 2:
+        ax.plot(rand_predictions[i:i+2, 0], rand_predictions[i:i+2, 1], rand_predictions[i:i+2, 2], color = "green", label = "Random", lw=0.)
+    else:
+        # ax.plot(fly_predictions[i:i+2, 0], fly_predictions[i:i+2, 1], fly_predictions[i:i+2, 2], color =plt.cm.inferno(i  / (timesteps - 1)), alpha = 0.5 + 0.5 * (i  / (timesteps - 1)), lw=0.2)
+        ax.plot(rand_predictions[i:i + 2, 0], rand_predictions[i:i + 2, 1], rand_predictions[i:i + 2, 2],
+                color="green", alpha=0.75 + 0.25 * (i / (timesteps - 1)), lw=0.2)
 
 
 ax.set_xlim([np.max(X[:,0]), np.min(X[:,0])])
